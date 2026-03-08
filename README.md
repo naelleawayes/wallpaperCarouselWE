@@ -12,6 +12,10 @@ Wallpaper Carousel scans your current wallpaper directory and displays all image
 
 This plugin integrates with all DMS features — selecting a wallpaper updates the shell wallpaper, color scheme, and any other DMS components that react to wallpaper changes.
 
+
+https://github.com/user-attachments/assets/39bcde76-7d7b-40c0-a083-3b8961edf10b
+
+
 ## Install
 
 > **Note:** DankMaterialShell must be managing your wallpaper for this plugin to work. It does not work with external wallpaper engines (e.g. swww, swaybg, hyprpaper). Enable wallpaper management in DMS Settings → Wallpaper.
