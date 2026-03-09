@@ -26,7 +26,8 @@ https://github.com/user-attachments/assets/39bcde76-7d7b-40c0-a083-3b8961edf10b
    tar xf wallpaperCarousel-*.tar.gz -C "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/"
    ```
 3. Open DankMaterialShell Settings → Plugins and enable **Wallpaper Carousel**
-4. Bind keys in your compositor config (see below) or call the IPC commands from a script
+4. Add the widget to your DankBar (Settings → Bar → Widgets) for a clickable wallpaper icon that toggles the carousel
+   - *Alternatively*, bind keys in your compositor config (see below) or call the IPC commands from a script
 
 ## IPC Commands
 

@@ -5,8 +5,8 @@
     "version": "0.6.0",
     "author": "yngwe",
     "icon": "wallpaper",
-    "type": "daemon",
-    "capabilities": ["wallpaper"],
+    "type": "widget",
+    "capabilities": ["wallpaper", "dankbar-widget"],
     "component": "./WallpaperCarousel.qml",
     "requires_dms": ">=1.2.0",
     "permissions": []

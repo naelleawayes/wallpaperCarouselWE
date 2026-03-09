@@ -5,12 +5,44 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Common
 import qs.Services
+import qs.Widgets
 import qs.Modules.Plugins
 
 PluginComponent {
     id: root
 
     property var popoutService: null
+
+    // -------------------------------------------------------------------------
+    // BAR WIDGET — pill shown in the DankBar; click to toggle the carousel
+    // -------------------------------------------------------------------------
+    horizontalBarPill: Component {
+        Row {
+            spacing: Theme.spacingXS
+            DankIcon {
+                name: "wallpaper"
+                size: Theme.iconSize - 6
+                color: overlay.shown ? Theme.primary : Theme.surfaceText
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    verticalBarPill: Component {
+        Column {
+            spacing: Theme.spacingXS
+            DankIcon {
+                name: "wallpaper"
+                size: Theme.iconSize - 6
+                color: overlay.shown ? Theme.primary : Theme.surfaceText
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    pillClickAction: (x, y, width, section, screen) => {
+        root.toggle();
+    }
 
     // -------------------------------------------------------------------------
     // WALLPAPER FOLDER — derived from the current DMS wallpaper path
