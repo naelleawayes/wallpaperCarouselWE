@@ -34,11 +34,11 @@ Control the carousel via DMS IPC:
 
 | Command | Description |
 |---------|-------------|
-| `dms ipc call wallpaperCarousel toggle` | Open or close the overlay |
-| `dms ipc call wallpaperCarousel open` | Open the overlay |
-| `dms ipc call wallpaperCarousel close` | Close the overlay |
-| `dms ipc call wallpaperCarousel cycleNext` | Open (if closed) and highlight next wallpaper |
-| `dms ipc call wallpaperCarousel cyclePrevious` | Open (if closed) and highlight previous wallpaper |
+| `dms ipc wallpaperCarousel toggle` | Open or close the overlay |
+| `dms ipc wallpaperCarousel open` | Open the overlay |
+| `dms ipc wallpaperCarousel close` | Close the overlay |
+| `dms ipc wallpaperCarousel cycleNext` | Open (if closed) and highlight next wallpaper |
+| `dms ipc wallpaperCarousel cyclePrevious` | Open (if closed) and highlight previous wallpaper |
 
 **Keyboard shortcuts** (when open): `←` / `→` to navigate, `Enter` to apply, `Escape` to close.
 
@@ -50,9 +50,9 @@ In `~/.config/niri/config.kdl`:
 
 ```kdl
 binds {
-    Mod+W { spawn "dms" "ipc" "call" "wallpaperCarousel" "toggle"; }
-    Mod+Shift+Right { spawn "dms" "ipc" "call" "wallpaperCarousel" "cycleNext"; }
-    Mod+Shift+Left { spawn "dms" "ipc" "call" "wallpaperCarousel" "cyclePrevious"; }
+    Mod+W { spawn "dms" "ipc" "wallpaperCarousel" "toggle"; }
+    Mod+Shift+Right { spawn "dms" "ipc" "wallpaperCarousel" "cycleNext"; }
+    Mod+Shift+Left { spawn "dms" "ipc" "wallpaperCarousel" "cyclePrevious"; }
 }
 ```
 
@@ -61,7 +61,7 @@ binds {
 In `~/.config/hypr/hyprland.conf`:
 
 ```ini
-bind = SUPER, W, exec, dms ipc call wallpaperCarousel toggle
-bind = SUPER SHIFT, Right, exec, dms ipc call wallpaperCarousel cycleNext
-bind = SUPER SHIFT, Left, exec, dms ipc call wallpaperCarousel cyclePrevious
+bind = SUPER, W, exec, dms ipc wallpaperCarousel toggle
+bind = SUPER SHIFT, Right, exec, dms ipc wallpaperCarousel cycleNext
+bind = SUPER SHIFT, Left, exec, dms ipc wallpaperCarousel cyclePrevious
 ```
