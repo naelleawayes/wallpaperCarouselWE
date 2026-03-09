@@ -128,7 +128,7 @@ PluginComponent {
         // Click background to close
         MouseArea {
             anchors.fill: parent
-            enabled: overlay.shown
+            enabled: overlay.shown && carousel.confirmingIndex < 0
             onClicked: root.close()
         }
 
@@ -178,6 +178,28 @@ PluginComponent {
             readonly property int borderWidth: 3
             readonly property real skewFactor: -0.35
 
+            property int confirmingIndex: -1
+
+            function confirmPick(idx, path) {
+                confirmingIndex = idx;
+                confirmTimer.start();
+                if (path) {
+                    if (SessionData.perMonitorWallpaper && overlay.screen)
+                        SessionData.setMonitorWallpaper(overlay.screen.name, path);
+                    else
+                        SessionData.setWallpaper(path);
+                }
+            }
+
+            Timer {
+                id: confirmTimer
+                interval: 300
+                onTriggered: {
+                    carousel.confirmingIndex = -1;
+                    root.close();
+                }
+            }
+
             ListView {
                 id: view
                 anchors.fill: parent
@@ -192,12 +214,16 @@ PluginComponent {
                 preferredHighlightBegin: (width / 2) - (carousel.itemWidth / 2)
                 preferredHighlightEnd:   (width / 2) + (carousel.itemWidth / 2)
 
-                highlightMoveDuration: carousel.initialFocusSet ? 300 : 0
+                highlightMoveDuration: carousel.initialFocusSet ? 150 : 0
 
                 focus: overlay.shown
                 activeFocusOnTab: true
 
                 Keys.onPressed: event => {
+                    if (carousel.confirmingIndex >= 0) {
+                        event.accepted = true;
+                        return;
+                    }
                     if (event.key === Qt.Key_Escape) {
                         root.close();
                         event.accepted = true;
@@ -236,23 +262,22 @@ PluginComponent {
                     readonly property bool isCurrent: ListView.isCurrentItem
                     readonly property int distFromCenter: Math.abs(index - view.currentIndex)
 
-                    z: isCurrent ? 10 : Math.max(1, 10 - distFromCenter)
+                    z: carousel.confirmingIndex === index ? 100
+                       : isCurrent ? 10 : Math.max(1, 10 - distFromCenter)
 
                     function pickWallpaper() {
+                        if (carousel.confirmingIndex >= 0) return;
                         const fullPath = root.wallpaperFolder + "/" + fileName;
-                        if (SessionData.perMonitorWallpaper && overlay.screen)
-                            SessionData.setMonitorWallpaper(overlay.screen.name, fullPath);
-                        else
-                            SessionData.setWallpaper(fullPath);
-                        root.close();
+                        carousel.confirmPick(index, fullPath);
                     }
 
                     MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            view.currentIndex = index;
-                            delegateRoot.pickWallpaper();
-                        }
+                        id: delegateMouseArea
+                        x: carousel.skewFactor * carousel.itemHeight / 2
+                        width: parent.width
+                        height: parent.height
+                        hoverEnabled: true
+                        onClicked: delegateRoot.pickWallpaper()
                     }
 
                     Item {
@@ -263,12 +288,22 @@ PluginComponent {
                         // Non-linear falloff: center = 1.15, neighbors shrink and fade
                         // using 1/(1+d²) curve for a gentle rolloff
                         readonly property real falloff: 1.0 / (1.0 + delegateRoot.distFromCenter * delegateRoot.distFromCenter)
-                        scale: 0.75 + 0.40 * falloff
-                        opacity: 0.25 + 0.75 * falloff
+                        readonly property bool isConfirmed: carousel.confirmingIndex === index
+                        readonly property bool isOtherConfirming: carousel.confirmingIndex >= 0 && !isConfirmed
+                        readonly property bool isHovered: delegateMouseArea.containsMouse && carousel.confirmingIndex < 0
+
+                        scale: isConfirmed ? 1.6
+                             : isOtherConfirming ? (0.75 + 0.40 * falloff) * 0.8
+                             : isHovered ? 0.75 + 0.60 * falloff
+                             : 0.75 + 0.40 * falloff
+                        opacity: isConfirmed ? 1.0
+                               : isOtherConfirming ? 0.0
+                               : isHovered ? 1.0
+                               : 0.25 + 0.75 * falloff
                         layer.enabled: opacity < 1
 
-                        Behavior on scale   { NumberAnimation { duration: 500; easing.type: Easing.OutBack } }
-                        Behavior on opacity { NumberAnimation { duration: 500 } }
+                        Behavior on scale   { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+                        Behavior on opacity { NumberAnimation { duration: 300 } }
 
                         transform: Matrix4x4 {
                             property real s: carousel.skewFactor
