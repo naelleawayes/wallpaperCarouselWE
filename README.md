@@ -1,6 +1,6 @@
 # Wallpaper Carousel WE
 
-##This is a fork of [WallpaperCarousel](https://github.com/motor-dev/wallpaperCarousel) by motor-dev.
+## This is a fork of [WallpaperCarousel](https://github.com/motor-dev/wallpaperCarousel) by motor-dev.
 ### ⚠️ I don't know sh*t about QML and this was written by Claude with a little bit of review on my part, but i cannot guarantee best practices are followed both for QML and for the DMS plugin implementation. I will eventually learn how to do this properly myself but i just wanted a quick fix for now, for my personal usage only. Use with caution. ⚠️
 
 #### What changes from the original plugin
