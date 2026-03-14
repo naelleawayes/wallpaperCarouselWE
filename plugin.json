@@ -1,9 +1,9 @@
 {
-    "id": "wallpaperCarousel",
-    "name": "Wallpaper Carousel",
+    "id": "wallpaperCarouselWE",
+    "name": "Wallpaper Carousel WE",
     "description": "Browse and pick wallpapers with a fullscreen skewed carousel overlay",
-    "version": "0.7.4",
-    "author": "yngwe",
+    "version": "0.9.0",
+    "author": "jxles",
     "icon": "wallpaper",
     "type": "daemon",
     "capabilities": ["wallpaper"],
