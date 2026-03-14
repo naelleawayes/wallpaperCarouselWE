@@ -5,10 +5,10 @@
 
 #### What changes from the original plugin
 
-Does away with DMS' built in Wallpaper manager.
-Uses swww for gifs/images, and linux-wallpaperengine for WE scenes.
-Adds a settings panel to pick additional folders for wallpapers (untested), to change animation duration and FPS, and to pick an animation type.
-Keeps matugen dynamic theming and enables that feature for WE as well.
+- Does away with DMS' built in Wallpaper manager.
+- Uses swww for gifs/images, and linux-wallpaperengine for WE scenes.
+- Adds a settings panel to pick additional folders for wallpapers (untested), to change animation duration and FPS, and to pick an animation type.
+- Keeps matugen dynamic theming and enables that feature for WE as well.
 
 
 ### Original Readme:
