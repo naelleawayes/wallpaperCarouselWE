@@ -67,6 +67,17 @@ PluginComponent {
     ListModel { id: stableModel }
     ListModel { id: weSceneModel }
     ListModel { id: weSceneFilteredModel }
+    ListModel { id: weCarouselModel }
+    // Combined "All" tab model: entries have { kind: "image"|"we", fileName, fileUrl, sceneId, name }
+    ListModel { id: allModel }
+
+    property bool _weInitialFocusSet: false
+    readonly property int _weBaseSceneCount: weSceneFilteredModel.count
+
+    // "all" tab filter: 0 = All, 1 = Images, 2 = WE
+    property int allFilter: 0
+    property bool _allInitialFocusSet: false
+    property int _allBaseCount: 0
 
     Timer {
         id: modelSyncTimer
@@ -167,6 +178,7 @@ PluginComponent {
         }
 
         carousel.tryFocus();
+        Qt.callLater(_syncAllModel);
     }
 
     // -------------------------------------------------------------------------
@@ -384,6 +396,112 @@ PluginComponent {
             if (!q || s.sceneId.includes(q) || (s.name && s.name.toLowerCase().includes(q)))
                 weSceneFilteredModel.append({ sceneId: s.sceneId, name: s.name });
         }
+        _syncWeCarouselModel();
+        Qt.callLater(_syncAllModel);
+    }
+
+    function _syncWeCarouselModel() {
+        const v = root._isInfinite ? weCarouselPathView : weCarouselListView;
+        const savedIndex = v.currentIndex;
+        const savedId = (savedIndex >= 0 && savedIndex < weCarouselModel.count)
+            ? weCarouselModel.get(savedIndex).sceneId : "";
+
+        weCarouselModel.clear();
+        for (let i = 0; i < weSceneFilteredModel.count; i++) {
+            const s = weSceneFilteredModel.get(i);
+            weCarouselModel.append({ sceneId: s.sceneId, name: s.name });
+        }
+
+        // Duplicate entries for infinite scroll so PathView fills the viewport
+        if (root._isInfinite && weSceneFilteredModel.count > 0) {
+            const viewWidth = weCarouselPathView.width > 0 ? weCarouselPathView.width : 2560;
+            const minCount = Math.ceil(viewWidth / carousel.itemWidth) + 6;
+            const baseCount = weSceneFilteredModel.count;
+            const targetCount = baseCount * Math.ceil(minCount / baseCount);
+            while (weCarouselModel.count < targetCount) {
+                for (let i = 0; i < baseCount && weCarouselModel.count < targetCount; i++) {
+                    const s = weSceneFilteredModel.get(i);
+                    weCarouselModel.append({ sceneId: s.sceneId, name: s.name });
+                }
+            }
+        }
+
+        // Restore position or jump to active scene
+        root._weInitialFocusSet = false;
+        _tryFocusWeCarousel();
+    }
+
+    function _tryFocusWeCarousel() {
+        if (root._weInitialFocusSet) return;
+        let targetIndex = 0;
+        if (root.activeWeScene && weCarouselModel.count > 0) {
+            for (let i = 0; i < weCarouselModel.count; i++) {
+                if (weCarouselModel.get(i).sceneId === root.activeWeScene) {
+                    targetIndex = i;
+                    break;
+                }
+            }
+        }
+        const v = root._isInfinite ? weCarouselPathView : weCarouselListView;
+        if (v.count > targetIndex) {
+            v.currentIndex = targetIndex;
+            if (!root._isInfinite)
+                v.positionViewAtIndex(targetIndex, ListView.Center);
+            root._weInitialFocusSet = true;
+        } else if (v.count > 0) {
+            v.currentIndex = 0;
+            root._weInitialFocusSet = true;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+
+    function _syncAllModel() {
+        allModel.clear();
+        const f = root.allFilter;
+        const baseEntries = [];
+        if (f === 0 || f === 1) {
+            for (let i = 0; i < stableModel.count; i++) {
+                const e = stableModel.get(i);
+                baseEntries.push({ kind: "image", fileName: e.fileName, fileUrl: e.fileUrl, sceneId: "", name: "" });
+            }
+        }
+        if (f === 0 || f === 2) {
+            for (let i = 0; i < weSceneFilteredModel.count; i++) {
+                const s = weSceneFilteredModel.get(i);
+                baseEntries.push({ kind: "we", fileName: "", fileUrl: "", sceneId: s.sceneId, name: s.name });
+            }
+        }
+        root._allBaseCount = baseEntries.length;
+        for (const entry of baseEntries)
+            allModel.append(entry);
+
+        // Duplicate entries for infinite scroll
+        if (root._isInfinite && baseEntries.length > 0) {
+            const viewWidth = (typeof allPathView !== "undefined" && allPathView.width > 0)
+                ? allPathView.width : 2560;
+            const minCount = Math.ceil(viewWidth / carousel.itemWidth) + 6;
+            const baseCount = baseEntries.length;
+            const targetCount = baseCount * Math.ceil(minCount / baseCount);
+            while (allModel.count < targetCount) {
+                for (let i = 0; i < baseCount && allModel.count < targetCount; i++)
+                    allModel.append(baseEntries[i]);
+            }
+        }
+
+        root._allInitialFocusSet = false;
+        _tryFocusAllCarousel();
+    }
+
+    function _tryFocusAllCarousel() {
+        if (root._allInitialFocusSet) return;
+        const v = root._isInfinite ? allPathView : allListView;
+        if (v.count > 0) {
+            v.currentIndex = 0;
+            if (!root._isInfinite)
+                v.positionViewAtIndex(0, ListView.Center);
+            root._allInitialFocusSet = true;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -398,13 +516,25 @@ PluginComponent {
 
     function open() {
         carousel.initialFocusSet = false;
+        root._weInitialFocusSet = false;
+        root._allInitialFocusSet = false;
         const focusedScreen = CompositorService.getFocusedScreen();
         if (focusedScreen)
             overlay.screen = focusedScreen;
         overlay.visible = true;
-        carousel.tryFocus();
-        root._currentView.forceActiveFocus();
-        Qt.callLater(() => root._currentView.forceActiveFocus());
+        if (carousel.activeTab === 1) {
+            carousel.tryFocus();
+            root._currentView.forceActiveFocus();
+            Qt.callLater(() => root._currentView.forceActiveFocus());
+        } else if (carousel.activeTab === 2) {
+            root._tryFocusWeCarousel();
+            const wv = root._isInfinite ? weCarouselPathView : weCarouselListView;
+            Qt.callLater(() => wv.forceActiveFocus());
+        } else {
+            root._tryFocusAllCarousel();
+            const av = root._isInfinite ? allPathView : allListView;
+            Qt.callLater(() => av.forceActiveFocus());
+        }
     }
 
     function close() {
@@ -518,7 +648,7 @@ PluginComponent {
                 spacing: 4
 
                 Repeater {
-                    model: ["Images", "WE Scenes"]
+                    model: ["All", "Images", "WE Scenes"]
                     delegate: Rectangle {
                         required property string modelData
                         required property int index
@@ -539,13 +669,7 @@ PluginComponent {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: {
-                                carousel.activeTab = index;
-                                if (index === 1 && !root._weScanDone)
-                                    root._startWeScan();
-                                if (index === 0)
-                                    Qt.callLater(() => view.forceActiveFocus());
-                            }
+                            onClicked: carousel.switchToTab(index)
                         }
                     }
                 }
@@ -553,17 +677,35 @@ PluginComponent {
         }
 
         // -------------------------------------------------------------------------
-        // CAROUSEL  (tab 0 — Images)
+        // CAROUSEL  (tab 1 — Images)
         // -------------------------------------------------------------------------
         Item {
             id: carousel
             anchors.fill: parent
             opacity: overlay.visible ? 1 : 0
-            visible: activeTab === 0
+            visible: activeTab === 1
             Behavior on opacity { NumberAnimation { duration: 150 } }
 
             property bool initialFocusSet: false
             property int activeTab: 0
+
+            function switchToTab(idx) {
+                activeTab = idx;
+                if (idx === 2) {
+                    if (!root._weScanDone) root._startWeScan();
+                    const wv = root._isInfinite ? weCarouselPathView : weCarouselListView;
+                    Qt.callLater(() => wv.forceActiveFocus());
+                } else if (idx === 1) {
+                    Qt.callLater(() => root._currentView.forceActiveFocus());
+                } else {
+                    const av = root._isInfinite ? allPathView : allListView;
+                    Qt.callLater(() => av.forceActiveFocus());
+                }
+            }
+
+            function cycleTab(dir) {
+                switchToTab((activeTab + 3 + dir) % 3);
+            }
 
             function tryFocus() {
                 if (initialFocusSet)
@@ -813,7 +955,7 @@ PluginComponent {
                 highlightMoveDuration: carousel.initialFocusSet ? 150 : 0
                 movementDirection: PathView.Shortest
 
-                focus: root._isInfinite && overlay.visible
+                focus: root._isInfinite && overlay.visible && carousel.activeTab === 1
 
                 Keys.onPressed: event => {
                     if (carousel.confirmingIndex >= 0) {
@@ -823,6 +965,10 @@ PluginComponent {
                     if (event.key === Qt.Key_Escape) {
                         root.close();
                         event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
                     } else if (event.key === Qt.Key_Left) {
                         decrementCurrentIndex();
                         event.accepted = true;
@@ -876,7 +1022,7 @@ PluginComponent {
 
                 highlightMoveDuration: carousel.initialFocusSet ? 150 : 0
 
-                focus: !root._isInfinite && overlay.visible
+                focus: !root._isInfinite && overlay.visible && carousel.activeTab === 1
 
                 Keys.onPressed: event => {
                     if (carousel.confirmingIndex >= 0) {
@@ -886,6 +1032,10 @@ PluginComponent {
                     if (event.key === Qt.Key_Escape) {
                         root.close();
                         event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
                     } else if (event.key === Qt.Key_Left) {
                         if (currentIndex > 0)
                             decrementCurrentIndex();
@@ -947,27 +1097,38 @@ PluginComponent {
         }
 
         // -------------------------------------------------------------------------
-        // WE SCENES  (tab 1 — Wallpaper Engine)
+        // WE SCENES  (tab 2 — Wallpaper Engine)
         // -------------------------------------------------------------------------
         Item {
             id: weTab
             anchors.fill: parent
-            anchors.topMargin: tabBar.height + tabBar.anchors.topMargin + 12
-            visible: carousel.activeTab === 1
+            visible: carousel.activeTab === 2
             opacity: overlay.visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 150 } }
 
             // Swallow clicks so they don't reach the close MouseArea below
             MouseArea { anchors.fill: parent; onClicked: {} }
 
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 12
+            property bool showPreview: true
 
-                // Search bar
+            // -----------------------------------------------------------------
+            // Toolbar: search + counts + mute + refresh
+            // -----------------------------------------------------------------
+            Item {
+                id: weToolbar
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: tabBar.height + tabBar.anchors.topMargin + 12
+                anchors.leftMargin: 20
+                anchors.rightMargin: 20
+                height: 40
+
                 Rectangle {
-                    width: parent.width
+                    id: weSearchBox
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(400, parent.width * 0.4)
                     height: 40
                     color: "#40FFFFFF"
                     radius: 20
@@ -992,13 +1153,21 @@ PluginComponent {
                         }
 
                         Keys.onEscapePressed: root.close()
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
+                                event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                const wv = root._isInfinite ? weCarouselPathView : weCarouselListView;
+                                wv.forceActiveFocus();
+                                event.accepted = true;
+                            }
+                        }
                         onTextChanged: root._filterWeScenes(text)
                     }
                 }
 
-                // Scene count + Refresh row
                 Row {
-                    width: parent.width
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
 
                     Text {
@@ -1008,7 +1177,27 @@ PluginComponent {
                         font.pixelSize: 12
                     }
 
-                    Item { width: parent.width - parent.children[0].width - parent.children[2].width - parent.children[3].width - 24; height: 1 }
+                    Rectangle {
+                        width: previewToggleLabel.implicitWidth + 20
+                        height: 28
+                        radius: 14
+                        color: weTab.showPreview ? "#80FFFFFF" : (previewToggleMa.containsMouse ? "#50FFFFFF" : "#30FFFFFF")
+
+                        Text {
+                            id: previewToggleLabel
+                            anchors.centerIn: parent
+                            text: weTab.showPreview ? "👁 Preview" : "👁 Hidden"
+                            color: "white"
+                            font.pixelSize: 12
+                        }
+
+                        MouseArea {
+                            id: previewToggleMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: weTab.showPreview = !weTab.showPreview
+                        }
+                    }
 
                     Rectangle {
                         width: muteLabel.implicitWidth + 20
@@ -1032,7 +1221,6 @@ PluginComponent {
                                 root.muteWE = !root.muteWE;
                                 if (pluginService && pluginService.savePluginData)
                                     pluginService.savePluginData(pluginId, "muteWE", root.muteWE);
-                                // Restart current scene with new audio setting if one is active
                                 if (root.activeWeScene)
                                     root.pickWeScene(root.activeWeScene);
                             }
@@ -1064,162 +1252,1079 @@ PluginComponent {
                         }
                     }
                 }
+            }
 
-                // Scene grid
-                Rectangle {
-                    width: parent.width
-                    height: parent.height - parent.spacing * 2 - 40 - 28
-                    color: "transparent"
-                    clip: true
+            // -----------------------------------------------------------------
+            // WE Carousel — PathView (infinite) / ListView (standard + wrap)
+            // -----------------------------------------------------------------
+            readonly property int weItemWidth: carousel.itemWidth
+            readonly property int weItemHeight: carousel.itemHeight
+            readonly property real weSkewFactor: carousel.skewFactor
+            readonly property int weBorderWidth: carousel.borderWidth
 
-                    GridView {
-                        id: weGrid
-                        anchors.fill: parent
-                        clip: true
-                        model: weSceneFilteredModel
+            property int weConfirmingIndex: -1
 
-                        readonly property int columns: Math.max(2, Math.floor(width / 200))
-                        cellWidth: Math.floor(width / columns)
-                        cellHeight: cellWidth + 48
+            function weConfirmPick(idx, sceneId) {
+                weConfirmingIndex = idx;
+                wePickTimer.start();
+                root.pickWeScene(sceneId);
+            }
 
-                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            Timer {
+                id: wePickTimer
+                interval: 300
+                onTriggered: weTab.weConfirmingIndex = -1
+            }
 
-                        Keys.onEscapePressed: root.close()
+            // Shared delegate for both WE views
+            Component {
+                id: weCarouselDelegate
 
-                        delegate: Item {
-                            id: weCard
-                            required property var modelData
-                            required property int index
+                Item {
+                    id: weDelegateRoot
+                    width: weTab.weItemWidth
+                    height: weTab.weItemHeight
+                    anchors.verticalCenter: parent ? parent.verticalCenter : undefined
 
-                            width: weGrid.cellWidth
-                            height: weGrid.cellHeight
+                    required property int index
+                    required property string sceneId
+                    required property string name
 
-                            readonly property string sceneId: modelData.sceneId || ""
-                            readonly property string sceneName: modelData.name || modelData.sceneId || ""
-                            readonly property bool isActive: root.activeWeScene === sceneId
+                    readonly property bool isCurrent: root._isInfinite
+                        ? PathView.isCurrentItem
+                        : ListView.isCurrentItem
 
-                            Rectangle {
-                                id: cardBg
+                    readonly property int distFromCenter: {
+                        if (root._isInfinite) {
+                            const n = weCarouselModel.count;
+                            if (n <= 1) return 0;
+                            const d = Math.abs(index - weCarouselPathView.currentIndex);
+                            return Math.min(d, n - d);
+                        }
+                        return Math.abs(index - weCarouselListView.currentIndex);
+                    }
+
+                    readonly property real falloff: 1.0 / (1.0 + distFromCenter * distFromCenter)
+
+                    readonly property real _dupeFade: {
+                        if (!root._isInfinite) return 1.0;
+                        const base = root._weBaseSceneCount;
+                        if (base <= 0 || base >= weCarouselModel.count) return 1.0;
+                        const n = weCarouselModel.count;
+                        const cur = weCarouselPathView.currentIndex;
+                        const wpOffset = ((index % base) - (cur % base) + base) % base;
+                        const leftCount  = Math.floor(base / 2);
+                        const rightCount = Math.floor((base - 1) / 2);
+                        let target;
+                        if (wpOffset === 0)
+                            target = cur;
+                        else if (wpOffset <= rightCount)
+                            target = (cur + wpOffset) % n;
+                        else if (base - wpOffset <= leftCount)
+                            target = (cur - (base - wpOffset) + n) % n;
+                        else
+                            return 0.0;
+                        return index === target ? 1.0 : 0.0;
+                    }
+
+                    z: weTab.weConfirmingIndex === index ? 100
+                       : isCurrent ? 10 : Math.max(1, 10 - distFromCenter)
+
+                    function pickScene() {
+                        if (weTab.weConfirmingIndex >= 0) return;
+                        weTab.weConfirmPick(index, sceneId);
+                    }
+
+                    MouseArea {
+                        id: weDelegateMa
+                        x: weTab.weSkewFactor * weTab.weItemHeight / 2
+                        width: parent.width
+                        height: parent.height
+                        hoverEnabled: true
+                        onClicked: weDelegateRoot.pickScene()
+                    }
+
+                    Item {
+                        anchors.centerIn: parent
+                        width: parent.width
+                        height: parent.height
+
+                        readonly property bool isConfirmed: weTab.weConfirmingIndex === weDelegateRoot.index
+                        readonly property bool isOtherConfirming: weTab.weConfirmingIndex >= 0 && !isConfirmed
+                        readonly property bool isHovered: weDelegateMa.containsMouse && weTab.weConfirmingIndex < 0
+
+                        scale: isConfirmed ? 1.6
+                             : isOtherConfirming ? (0.75 + 0.40 * weDelegateRoot.falloff) * 0.8
+                             : isHovered ? 0.75 + 0.60 * weDelegateRoot.falloff
+                             : 0.75 + 0.40 * weDelegateRoot.falloff
+                        opacity: (isConfirmed ? 0.0
+                               : isOtherConfirming ? 0.0
+                               : isHovered ? 1.0
+                               : 0.1 + 0.9 * weDelegateRoot.falloff) * weDelegateRoot._dupeFade
+                        layer.enabled: opacity < 1
+
+                        Behavior on scale   { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+                        Behavior on opacity { NumberAnimation { duration: 300 } }
+
+                        transform: Matrix4x4 {
+                            property real s: weTab.weSkewFactor
+                            matrix: Qt.matrix4x4(1, s, 0, 0,
+                                                 0, 1, 0, 0,
+                                                 0, 0, 1, 0,
+                                                 0, 0, 0, 1)
+                        }
+
+                        // Active scene indicator ring
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "transparent"
+                            border.width: root.activeWeScene === weDelegateRoot.sceneId ? 3 : 0
+                            border.color: "#AAFFFFFF"
+                            z: 5
+                        }
+
+                        // Outer skewed border preview
+                        AnimatedImage {
+                            id: weOuterImg
+                            anchors.fill: parent
+                            fillMode: Image.Stretch
+                            asynchronous: true
+                            visible: weInnerImg.status === Image.Ready
+
+                            property var exts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
+                            property int extIdx: 0
+                            function tryLoad() {
+                                if (extIdx >= exts.length) { source = ""; return; }
+                                source = "file://" + root.weWorkshopPath + "/" + weDelegateRoot.sceneId
+                                         + "/preview" + exts[extIdx];
+                            }
+                            Component.onCompleted: tryLoad()
+                            onStatusChanged: {
+                                if (status === Image.Error) { extIdx += 1; tryLoad(); }
+                            }
+                            playing: weDelegateRoot.isCurrent && status === Image.Ready
+                                     && source.toString().toLowerCase().endsWith(".gif")
+                        }
+
+                        Item {
+                            anchors.fill: parent
+                            anchors.margins: weTab.weBorderWidth
+                            visible: weInnerImg.status === Image.Ready
+
+                            Rectangle { anchors.fill: parent; color: "black" }
+                            clip: true
+
+                            AnimatedImage {
+                                id: weInnerImg
                                 anchors.centerIn: parent
-                                width: parent.width - 12
-                                height: parent.height - 12
-                                radius: 8
-                                color: cardMa.containsMouse ? "#50FFFFFF" : "#28FFFFFF"
-                                border.width: weCard.isActive ? 2 : 0
-                                border.color: "#AAFFFFFF"
+                                anchors.horizontalCenterOffset: -50
 
-                                Column {
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    spacing: 4
+                                width: parent.width + (parent.height * Math.abs(weTab.weSkewFactor)) + 50
+                                height: parent.height
 
-                                    Item {
-                                        width: parent.width
-                                        height: parent.width
-                                        clip: true
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
 
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: "#20FFFFFF"
-                                            radius: 4
-                                        }
-
-                                        AnimatedImage {
-                                            id: previewImg
-                                            anchors.fill: parent
-                                            fillMode: Image.PreserveAspectCrop
-                                            asynchronous: true
-                                            cache: true
-
-                                            property var exts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
-                                            property int extIdx: 0
-
-                                            function tryLoad() {
-                                                if (extIdx >= exts.length) { source = ""; return; }
-                                                source = "file://" + root.weWorkshopPath + "/" + weCard.sceneId
-                                                         + "/preview" + exts[extIdx];
-                                            }
-
-                                            Component.onCompleted: tryLoad()
-
-                                            onStatusChanged: {
-                                                if (status === Image.Error) {
-                                                    extIdx += 1;
-                                                    tryLoad();
-                                                } else if (status === Image.Ready) {
-                                                    playing = source.toString().toLowerCase().endsWith(".gif");
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "No Preview"
-                                            color: "#80FFFFFF"
-                                            font.pixelSize: 11
-                                            visible: previewImg.status !== Image.Ready &&
-                                                     previewImg.status !== Image.Loading
-                                        }
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: weCard.sceneName
-                                        color: "white"
-                                        font.pixelSize: 11
-                                        font.weight: Font.Medium
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.NoWrap
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: "ID: " + weCard.sceneId
-                                        color: "#80FFFFFF"
-                                        font.pixelSize: 10
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.NoWrap
-                                    }
+                                property var exts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
+                                property int extIdx: 0
+                                function tryLoad() {
+                                    if (extIdx >= exts.length) { source = ""; return; }
+                                    source = "file://" + root.weWorkshopPath + "/" + weDelegateRoot.sceneId
+                                             + "/preview" + exts[extIdx];
                                 }
+                                Component.onCompleted: tryLoad()
+                                onStatusChanged: {
+                                    if (status === Image.Error) { extIdx += 1; tryLoad(); }
+                                }
+                                playing: weDelegateRoot.isCurrent && status === Image.Ready
+                                         && source.toString().toLowerCase().endsWith(".gif")
 
-                                MouseArea {
-                                    id: cardMa
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: root.pickWeScene(weCard.sceneId)
+                                transform: Matrix4x4 {
+                                    property real s: -weTab.weSkewFactor
+                                    matrix: Qt.matrix4x4(1, s, 0, 0,
+                                                         0, 1, 0, 0,
+                                                         0, 0, 1, 0,
+                                                         0, 0, 0, 1)
+                                }
+                            }
+                        }
+
+                        // Fallback: no preview placeholder
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "#28FFFFFF"
+                            visible: weInnerImg.status !== Image.Ready && weInnerImg.status !== Image.Loading
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "No Preview"
+                                color: "#80FFFFFF"
+                                font.pixelSize: 13
+                            }
+                        }
+                    }
+                }
+            }
+
+            // PathView for infinite mode — fills parent like the images carousel
+            PathView {
+                id: weCarouselPathView
+                anchors.top: weToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: root._isInfinite
+
+                model: root._isInfinite ? weCarouselModel : null
+                delegate: weCarouselDelegate
+
+                pathItemCount: Math.max(1, Math.min(weCarouselModel.count,
+                    Math.ceil(width / weTab.weItemWidth) + 4))
+                cacheItemCount: 4
+
+                preferredHighlightBegin: 0.5
+                preferredHighlightEnd: 0.5
+                highlightRangeMode: PathView.StrictlyEnforceRange
+                highlightMoveDuration: root._weInitialFocusSet ? 150 : 0
+                movementDirection: PathView.Shortest
+
+                focus: root._isInfinite && overlay.visible && carousel.activeTab === 2
+
+                Keys.onPressed: event => {
+                    if (weTab.weConfirmingIndex >= 0) { event.accepted = true; return; }
+                    if (event.key === Qt.Key_Escape) {
+                        root.close(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Left) {
+                        decrementCurrentIndex(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Right) {
+                        incrementCurrentIndex(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (currentItem) currentItem.pickScene();
+                        event.accepted = true;
+                    }
+                }
+
+                onCountChanged: root._tryFocusWeCarousel()
+
+                readonly property real _pathLen: pathItemCount * weTab.weItemWidth
+                readonly property real _pathX0: (width - _pathLen) / 2
+                path: Path {
+                    startX: weCarouselPathView._pathX0
+                    startY: weCarouselPathView.height / 2 - weTab.weItemHeight / 2
+                    PathLine {
+                        x: weCarouselPathView._pathX0 + weCarouselPathView._pathLen
+                        y: weCarouselPathView.height / 2 - weTab.weItemHeight / 2
+                    }
+                }
+            }
+
+            // ListView for standard / wrap modes — fills parent like the images carousel
+            ListView {
+                id: weCarouselListView
+                anchors.top: weToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: !root._isInfinite
+
+                model: root._isInfinite ? null : weCarouselModel
+                delegate: weCarouselDelegate
+
+                spacing: 0
+                orientation: ListView.Horizontal
+                clip: false
+                cacheBuffer: 5000
+
+                highlightRangeMode: ListView.StrictlyEnforceRange
+                preferredHighlightBegin: (width / 2) - (weTab.weItemWidth / 2)
+                preferredHighlightEnd:   (width / 2) + (weTab.weItemWidth / 2)
+                highlightMoveDuration: root._weInitialFocusSet ? 150 : 0
+
+                focus: !root._isInfinite && overlay.visible && carousel.activeTab === 2
+
+                Keys.onPressed: event => {
+                    if (weTab.weConfirmingIndex >= 0) { event.accepted = true; return; }
+                    if (event.key === Qt.Key_Escape) {
+                        root.close(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Left) {
+                        if (currentIndex > 0)
+                            decrementCurrentIndex();
+                        else if (root._wrapsIndex)
+                            currentIndex = count - 1;
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Right) {
+                        if (currentIndex < count - 1)
+                            incrementCurrentIndex();
+                        else if (root._wrapsIndex)
+                            currentIndex = 0;
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Home) {
+                        currentIndex = 0; event.accepted = true;
+                    } else if (event.key === Qt.Key_End) {
+                        currentIndex = count - 1; event.accepted = true;
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (currentItem) currentItem.pickScene();
+                        event.accepted = true;
+                    }
+                }
+
+                onCountChanged: root._tryFocusWeCarousel()
+            }
+
+            // -----------------------------------------------------------------
+            // Compact info strip — pinned to the bottom of the WE tab
+            // -----------------------------------------------------------------
+            Item {
+                id: weInfoStrip
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 24
+                width: Math.min(parent.width - 40, 700)
+                height: weInfoRow.implicitHeight + 12
+                visible: weDetailPanel.currentSceneId !== "" && weSceneFilteredModel.count > 0
+
+                // small preview thumbnail
+                Item {
+                    id: weThumb
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: weTab.showPreview ? 96 : 0
+                    height: weTab.showPreview ? 54 : 0
+                    clip: true
+                    visible: weTab.showPreview
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#20FFFFFF"
+                        radius: 6
+                    }
+
+                    AnimatedImage {
+                        id: weDetailImg
+                        anchors.fill: parent
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+
+                        property string watchedId: weDetailPanel.currentSceneId
+                        property var exts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
+                        property int extIdx: 0
+
+                        function tryLoad() {
+                            if (extIdx >= exts.length) { source = ""; return; }
+                            source = "file://" + root.weWorkshopPath + "/" + watchedId
+                                     + "/preview" + exts[extIdx];
+                        }
+                        onWatchedIdChanged: { extIdx = 0; tryLoad(); }
+                        Component.onCompleted: tryLoad()
+                        onStatusChanged: {
+                            if (status === Image.Error) { extIdx += 1; tryLoad(); }
+                            else if (status === Image.Ready)
+                                playing = source.toString().toLowerCase().endsWith(".gif");
+                        }
+                    }
+                }
+
+                Row {
+                    id: weInfoRow
+                    anchors.left: weThumb.right
+                    anchors.leftMargin: weTab.showPreview ? 12 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: weDetailPanel.currentName
+                        color: "white"
+                        font.pixelSize: 15
+                        font.weight: Font.Medium
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, 280)
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "ID: " + weDetailPanel.currentSceneId
+                        color: "#80FFFFFF"
+                        font.pixelSize: 12
+                    }
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: activeStripLabel.implicitWidth + 16
+                        height: 22
+                        radius: 11
+                        color: "#6600CC66"
+                        border.width: 1
+                        border.color: "#80AAFFAA"
+                        visible: weDetailPanel.isActive
+
+                        Text {
+                            id: activeStripLabel
+                            anchors.centerIn: parent
+                            text: "● Active"
+                            color: "#AAFFAA"
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: applyStripLabel.implicitWidth + 20
+                        height: 28
+                        radius: 14
+                        color: applyStripMa.containsMouse ? "#DDFFFFFF" : "#80FFFFFF"
+
+                        Text {
+                            id: applyStripLabel
+                            anchors.centerIn: parent
+                            text: weDetailPanel.isActive ? "Restart" : "Apply"
+                            color: "#CC000000"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                        }
+
+                        MouseArea {
+                            id: applyStripMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                const v = root._isInfinite ? weCarouselPathView : weCarouselListView;
+                                weTab.weConfirmPick(v.currentIndex, weDetailPanel.currentSceneId);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // detail state (no separate panel — just the info strip above)
+            readonly property var _weCurrentModel: {
+                const v = root._isInfinite ? weCarouselPathView : weCarouselListView;
+                const idx = v.currentIndex;
+                return (idx >= 0 && idx < weCarouselModel.count) ? weCarouselModel.get(idx) : null;
+            }
+
+            Item {
+                id: weDetailPanel
+                readonly property string currentSceneId: weTab._weCurrentModel ? weTab._weCurrentModel.sceneId : ""
+                readonly property string currentName: weTab._weCurrentModel ? (weTab._weCurrentModel.name || weTab._weCurrentModel.sceneId) : ""
+                readonly property bool isActive: root.activeWeScene === currentSceneId && currentSceneId !== ""
+            }
+
+            // Empty / scanning state
+            Column {
+                anchors.centerIn: parent
+                spacing: 10
+                visible: weSceneFilteredModel.count === 0
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root._weScanDone
+                          ? (weSearchField.text ? "No scenes match your search" : "No scenes found")
+                          : "Scanning…"
+                    color: "white"
+                    font.pixelSize: 18
+                    font.bold: true
+                }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root._weScanDone && !weSearchField.text
+                          ? "Make sure Steam is installed and Wallpaper Engine (431960) is in your library.\nPath: " + root.weWorkshopPath
+                          : ""
+                    color: "#BBBBBB"
+                    font.pixelSize: 12
+                    horizontalAlignment: Text.AlignHCenter
+                    lineHeight: 1.4
+                    visible: text.length > 0
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // ALL TAB  (tab 0 — default, shows images + WE scenes together)
+        // -------------------------------------------------------------------------
+        Item {
+            id: allTab
+            anchors.fill: parent
+            visible: carousel.activeTab === 0
+            opacity: overlay.visible ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+
+            MouseArea { anchors.fill: parent; onClicked: {} }
+
+            property bool showPreview: true
+
+            // -----------------------------------------------------------------
+            // Toolbar: filter dropdown + counts
+            // -----------------------------------------------------------------
+            Item {
+                id: allToolbar
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: tabBar.height + tabBar.anchors.topMargin + 12
+                anchors.leftMargin: 20
+                anchors.rightMargin: 20
+                height: 40
+
+                Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+
+                    Repeater {
+                        model: ["All", "Images", "WE Scenes"]
+                        Rectangle {
+                            readonly property int filterIdx: index
+                            width: filterLabel.implicitWidth + 24
+                            height: 32
+                            radius: 16
+                            color: root.allFilter === filterIdx
+                                   ? "#80FFFFFF"
+                                   : (filterMa.containsMouse ? "#50FFFFFF" : "#30FFFFFF")
+
+                            Text {
+                                id: filterLabel
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: "white"
+                                font.pixelSize: 13
+                                font.weight: root.allFilter === parent.filterIdx ? Font.Medium : Font.Normal
+                            }
+
+                            MouseArea {
+                                id: filterMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    root.allFilter = parent.filterIdx;
+                                    root._syncAllModel();
                                 }
                             }
                         }
                     }
+                }
 
-                    // Empty/loading state
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 10
-                        visible: weSceneFilteredModel.count === 0
+                Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: allModel.count + " item" + (allModel.count !== 1 ? "s" : "")
+                        color: "#BBBBBB"
+                        font.pixelSize: 12
+                    }
+
+                    Rectangle {
+                        width: allPreviewToggleLabel.implicitWidth + 20
+                        height: 28
+                        radius: 14
+                        color: allTab.showPreview ? "#80FFFFFF" : (allPreviewToggleMa.containsMouse ? "#50FFFFFF" : "#30FFFFFF")
 
                         Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: root._weScanDone
-                                  ? (weSearchField.text ? "No scenes match your search" : "No scenes found")
-                                  : "Scanning…"
+                            id: allPreviewToggleLabel
+                            anchors.centerIn: parent
+                            text: allTab.showPreview ? "\uD83D\uDC41 Preview" : "\uD83D\uDC41 Hidden"
                             color: "white"
-                            font.pixelSize: 18
-                            font.bold: true
+                            font.pixelSize: 12
                         }
 
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: root._weScanDone && !weSearchField.text
-                                  ? "Make sure Steam is installed and Wallpaper Engine (431960) is in your library.\nPath: " + root.weWorkshopPath
-                                  : ""
-                            color: "#BBBBBB"
-                            font.pixelSize: 12
-                            horizontalAlignment: Text.AlignHCenter
-                            lineHeight: 1.4
-                            visible: text.length > 0
+                        MouseArea {
+                            id: allPreviewToggleMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: allTab.showPreview = !allTab.showPreview
                         }
                     }
+                }
+            }
+
+            // Shared delegate for both All-tab views
+            Component {
+                id: allCarouselDelegate
+
+                Item {
+                    id: allDelegateRoot
+                    width: carousel.itemWidth
+                    height: carousel.itemHeight
+                    anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+
+                    required property int index
+                    required property string kind
+                    required property string fileUrl
+                    required property string sceneId
+                    required property string name
+
+                    readonly property bool isCurrent: root._isInfinite
+                        ? PathView.isCurrentItem
+                        : ListView.isCurrentItem
+
+                    readonly property bool isActiveItem: {
+                        if (kind === "image") {
+                            const wp = (SessionData.perMonitorWallpaper && overlay.screen)
+                                       ? SessionData.getMonitorWallpaper(overlay.screen.name)
+                                       : SessionData.wallpaperPath;
+                            return fileUrl !== "" && fileUrl === wp;
+                        }
+                        return sceneId !== "" && sceneId === root.activeWeScene;
+                    }
+
+                    readonly property int distFromCenter: {
+                        if (root._isInfinite) {
+                            const n = allModel.count;
+                            if (n <= 1) return 0;
+                            const d = Math.abs(index - allPathView.currentIndex);
+                            return Math.min(d, n - d);
+                        }
+                        return Math.abs(index - allListView.currentIndex);
+                    }
+
+                    readonly property real falloff: 1.0 / (1.0 + distFromCenter * distFromCenter)
+
+                    readonly property real _dupeFade: {
+                        if (!root._isInfinite) return 1.0;
+                        const base = root._allBaseCount;
+                        if (base <= 0 || base >= allModel.count) return 1.0;
+                        const n = allModel.count;
+                        const cur = allPathView.currentIndex;
+                        const wpOffset = ((index % base) - (cur % base) + base) % base;
+                        const leftCount  = Math.floor(base / 2);
+                        const rightCount = Math.floor((base - 1) / 2);
+                        let target;
+                        if (wpOffset === 0)
+                            target = cur;
+                        else if (wpOffset <= rightCount)
+                            target = (cur + wpOffset) % n;
+                        else if (base - wpOffset <= leftCount)
+                            target = (cur - (base - wpOffset) + n) % n;
+                        else
+                            return 0.0;
+                        return index === target ? 1.0 : 0.0;
+                    }
+
+                    function activateItem() {
+                        if (kind === "image") {
+                            carousel.confirmPick(index, fileUrl);
+                        } else {
+                            allTab._allConfirmingIndex = index;
+                            allPickTimer.start();
+                            root.pickWeScene(sceneId);
+                        }
+                    }
+
+                    z: allTab._allConfirmingIndex === index ? 100
+                       : isCurrent ? 10 : Math.max(1, 10 - distFromCenter)
+
+                    MouseArea {
+                        id: allDelegateMa
+                        x: carousel.skewFactor * carousel.itemHeight / 2
+                        width: parent.width
+                        height: parent.height
+                        hoverEnabled: true
+                        onClicked: allDelegateRoot.activateItem()
+                    }
+
+                    Item {
+                        anchors.centerIn: parent
+                        width: parent.width
+                        height: parent.height
+
+                        readonly property bool isConfirmed: allTab._allConfirmingIndex === allDelegateRoot.index
+                        readonly property bool isOtherConfirming: allTab._allConfirmingIndex >= 0 && !isConfirmed
+                        readonly property bool isHovered: allDelegateMa.containsMouse && allTab._allConfirmingIndex < 0
+
+                        scale: isConfirmed ? 1.6
+                             : isOtherConfirming ? (0.75 + 0.40 * allDelegateRoot.falloff) * 0.8
+                             : isHovered ? 0.75 + 0.60 * allDelegateRoot.falloff
+                             : 0.75 + 0.40 * allDelegateRoot.falloff
+                        opacity: (isConfirmed ? 0.0
+                               : isOtherConfirming ? 0.0
+                               : isHovered ? 1.0
+                               : 0.1 + 0.9 * allDelegateRoot.falloff) * allDelegateRoot._dupeFade
+                        layer.enabled: opacity < 1
+
+                        Behavior on scale   { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
+                        Behavior on opacity { NumberAnimation { duration: 300 } }
+
+                        transform: Matrix4x4 {
+                            property real s: carousel.skewFactor
+                            matrix: Qt.matrix4x4(1, s, 0, 0,
+                                                 0, 1, 0, 0,
+                                                 0, 0, 1, 0,
+                                                 0, 0, 0, 1)
+                        }
+
+                        // Active indicator ring
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "transparent"
+                            border.width: allDelegateRoot.isActiveItem ? 3 : 0
+                            border.color: "#AAFFFFFF"
+                            z: 5
+                        }
+
+                        // Outer skewed border image
+                        AnimatedImage {
+                            id: allOuterImg
+                            anchors.fill: parent
+                            fillMode: Image.Stretch
+                            asynchronous: true
+                            visible: allInnerImg.status === Image.Ready
+                            playing: allDelegateRoot.isCurrent && status === Image.Ready
+                                     && source.toString().toLowerCase().endsWith(".gif")
+
+                            property var weExts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
+                            property int weExtIdx: 0
+                            function tryLoadWe() {
+                                if (weExtIdx >= weExts.length) { source = ""; return; }
+                                source = "file://" + root.weWorkshopPath + "/" + allDelegateRoot.sceneId
+                                         + "/preview" + weExts[weExtIdx];
+                            }
+                            source: allDelegateRoot.kind === "image" ? allDelegateRoot.fileUrl : ""
+                            Component.onCompleted: { if (kind === "we") tryLoadWe(); }
+                            onStatusChanged: { if (status === Image.Error && kind === "we") { weExtIdx += 1; tryLoadWe(); } }
+                        }
+
+                        Item {
+                            anchors.fill: parent
+                            anchors.margins: carousel.borderWidth
+                            visible: allInnerImg.status === Image.Ready
+
+                            Rectangle { anchors.fill: parent; color: "black" }
+                            clip: true
+
+                            AnimatedImage {
+                                id: allInnerImg
+                                anchors.centerIn: parent
+                                anchors.horizontalCenterOffset: -50
+
+                                width: parent.width + (parent.height * Math.abs(carousel.skewFactor)) + 50
+                                height: parent.height
+
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                playing: allDelegateRoot.isCurrent && status === Image.Ready
+                                         && source.toString().toLowerCase().endsWith(".gif")
+
+                                property var weExts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]
+                                property int weExtIdx: 0
+                                function tryLoadWe() {
+                                    if (weExtIdx >= weExts.length) { source = ""; return; }
+                                    source = "file://" + root.weWorkshopPath + "/" + allDelegateRoot.sceneId
+                                             + "/preview" + weExts[weExtIdx];
+                                }
+                                source: allDelegateRoot.kind === "image" ? allDelegateRoot.fileUrl : ""
+                                Component.onCompleted: { if (kind === "we") tryLoadWe(); }
+                                onStatusChanged: { if (status === Image.Error && kind === "we") { weExtIdx += 1; tryLoadWe(); } }
+
+                                transform: Matrix4x4 {
+                                    property real s: -carousel.skewFactor
+                                    matrix: Qt.matrix4x4(1, s, 0, 0,
+                                                         0, 1, 0, 0,
+                                                         0, 0, 1, 0,
+                                                         0, 0, 0, 1)
+                                }
+                            }
+                        }
+
+                        // Kind badge
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 4
+                            width: allKindBadgeLabel.implicitWidth + 12
+                            height: 18
+                            radius: 9
+                            color: allDelegateRoot.kind === "we" ? "#80660099" : "#80004466"
+                            visible: allDelegateRoot.isCurrent || allDelegateRoot.isActiveItem
+                            z: 6
+
+                            Text {
+                                id: allKindBadgeLabel
+                                anchors.centerIn: parent
+                                text: allDelegateRoot.kind === "we" ? "WE" : "IMG"
+                                color: "white"
+                                font.pixelSize: 9
+                                font.weight: Font.Bold
+                            }
+                        }
+                    }
+                }
+            }
+
+            property int _allConfirmingIndex: -1
+
+            Timer {
+                id: allPickTimer
+                interval: 300
+                onTriggered: allTab._allConfirmingIndex = -1
+            }
+
+            // PathView for infinite mode
+            PathView {
+                id: allPathView
+                anchors.top: allToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: root._isInfinite
+
+                model: root._isInfinite ? allModel : null
+                delegate: allCarouselDelegate
+
+                pathItemCount: Math.max(1, Math.min(allModel.count,
+                    Math.ceil(width / carousel.itemWidth) + 4))
+                cacheItemCount: 4
+
+                preferredHighlightBegin: 0.5
+                preferredHighlightEnd: 0.5
+                highlightRangeMode: PathView.StrictlyEnforceRange
+                highlightMoveDuration: root._allInitialFocusSet ? 150 : 0
+                movementDirection: PathView.Shortest
+
+                focus: root._isInfinite && overlay.visible && carousel.activeTab === 0
+
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Escape) {
+                        root.close(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Left) {
+                        decrementCurrentIndex(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Right) {
+                        incrementCurrentIndex(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (currentItem) currentItem.activateItem();
+                        event.accepted = true;
+                    }
+                }
+
+                onCountChanged: root._tryFocusAllCarousel()
+
+                readonly property real _pathLen: pathItemCount * carousel.itemWidth
+                readonly property real _pathX0: (width - _pathLen) / 2
+                path: Path {
+                    startX: allPathView._pathX0
+                    startY: allPathView.height / 2 - carousel.itemHeight / 2
+                    PathLine {
+                        x: allPathView._pathX0 + allPathView._pathLen
+                        y: allPathView.height / 2 - carousel.itemHeight / 2
+                    }
+                }
+            }
+
+            // ListView for standard / wrap modes
+            ListView {
+                id: allListView
+                anchors.top: allToolbar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: !root._isInfinite
+
+                model: root._isInfinite ? null : allModel
+                delegate: allCarouselDelegate
+
+                spacing: 0
+                orientation: ListView.Horizontal
+                clip: false
+                cacheBuffer: 5000
+
+                highlightRangeMode: ListView.StrictlyEnforceRange
+                preferredHighlightBegin: (width / 2) - (carousel.itemWidth / 2)
+                preferredHighlightEnd:   (width / 2) + (carousel.itemWidth / 2)
+                highlightMoveDuration: root._allInitialFocusSet ? 150 : 0
+
+                focus: !root._isInfinite && overlay.visible && carousel.activeTab === 0
+
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Escape) {
+                        root.close(); event.accepted = true;
+                    } else if (event.key === Qt.Key_Tab) {
+                        carousel.cycleTab(+1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Backtab) {
+                        carousel.cycleTab(-1); event.accepted = true;
+                    } else if (event.key === Qt.Key_Left) {
+                        if (currentIndex > 0)
+                            decrementCurrentIndex();
+                        else if (root._wrapsIndex)
+                            currentIndex = count - 1;
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Right) {
+                        if (currentIndex < count - 1)
+                            incrementCurrentIndex();
+                        else if (root._wrapsIndex)
+                            currentIndex = 0;
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Home) {
+                        currentIndex = 0; event.accepted = true;
+                    } else if (event.key === Qt.Key_End) {
+                        currentIndex = count - 1; event.accepted = true;
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (currentItem) currentItem.activateItem();
+                        event.accepted = true;
+                    }
+                }
+
+                onCountChanged: root._tryFocusAllCarousel()
+            }
+
+            // Compact info strip — pinned to the bottom of the All tab
+            Item {
+                id: allInfoStrip
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 24
+                width: Math.min(parent.width - 40, 700)
+                height: allInfoRow.implicitHeight + 12
+                visible: allTab.showPreview && allInfoStrip._currentKind !== ""
+
+                readonly property var _currentEntry: {
+                    const v = root._isInfinite ? allPathView : allListView;
+                    const idx = v.currentIndex;
+                    return (idx >= 0 && idx < allModel.count) ? allModel.get(idx) : null;
+                }
+                readonly property string _currentKind: _currentEntry ? _currentEntry.kind : ""
+                readonly property string _displayName: {
+                    if (!_currentEntry) return "";
+                    return _currentEntry.kind === "we"
+                        ? (_currentEntry.name || _currentEntry.sceneId)
+                        : _currentEntry.fileName;
+                }
+                readonly property string _previewSource: {
+                    if (!_currentEntry) return "";
+                    if (_currentEntry.kind === "image") return _currentEntry.fileUrl;
+                    if (_currentEntry.sceneId)
+                        return "file://" + root.weWorkshopPath + "/" + _currentEntry.sceneId + "/preview.jpg";
+                    return "";
+                }
+                readonly property bool _isActiveItem: {
+                    if (!_currentEntry) return false;
+                    if (_currentEntry.kind === "image") {
+                        const wp = (SessionData.perMonitorWallpaper && overlay.screen)
+                                   ? SessionData.getMonitorWallpaper(overlay.screen.name)
+                                   : SessionData.wallpaperPath;
+                        return _currentEntry.fileUrl !== "" && _currentEntry.fileUrl === wp;
+                    }
+                    return _currentEntry.sceneId === root.activeWeScene;
+                }
+
+                Item {
+                    id: allThumb
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 96; height: 54
+                    clip: true
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#20FFFFFF"
+                        radius: 6
+                    }
+
+                    Image {
+                        anchors.fill: parent
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+                        source: allInfoStrip._previewSource
+                    }
+                }
+
+                Row {
+                    id: allInfoRow
+                    anchors.left: allThumb.right
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: allInfoStrip._displayName
+                        color: "white"
+                        font.pixelSize: 15
+                        font.weight: Font.Medium
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, 280)
+                    }
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: allActiveLabel.implicitWidth + 16
+                        height: 22
+                        radius: 11
+                        color: "#6600CC66"
+                        border.width: 1
+                        border.color: "#80AAFFAA"
+                        visible: allInfoStrip._isActiveItem
+
+                        Text {
+                            id: allActiveLabel
+                            anchors.centerIn: parent
+                            text: "● Active"
+                            color: "#AAFFAA"
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: allApplyLabel.implicitWidth + 20
+                        height: 28
+                        radius: 14
+                        color: allApplyMa.containsMouse ? "#DDFFFFFF" : "#80FFFFFF"
+
+                        Text {
+                            id: allApplyLabel
+                            anchors.centerIn: parent
+                            text: allInfoStrip._isActiveItem
+                                  ? (allInfoStrip._currentKind === "we" ? "Restart" : "Current")
+                                  : "Apply"
+                            color: "#CC000000"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                        }
+
+                        MouseArea {
+                            id: allApplyMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                const v = root._isInfinite ? allPathView : allListView;
+                                if (v.currentItem) v.currentItem.activateItem();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Empty state
+            Column {
+                anchors.centerIn: parent
+                spacing: 10
+                visible: allModel.count === 0
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "No items found"
+                    color: "white"
+                    font.pixelSize: 18
+                    font.bold: true
                 }
             }
         }
@@ -1228,7 +2333,7 @@ PluginComponent {
         Column {
             anchors.centerIn: parent
             spacing: 12
-            visible: overlay.visible && carousel.activeTab === 0 &&
+            visible: overlay.visible && carousel.activeTab === 1 &&
                      folderModel.status === FolderListModel.Ready && folderModel.count === 0
 
             Text {
